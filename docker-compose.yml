@@ -15,11 +15,11 @@ services:
       # mount permission headaches on the host.
       - subsbot-tmp:/app/tmp
     # faster-whisper links against OpenMP and benefits from several cores.
-    # Adjust limits to match the host; these are safe defaults for 2-4 CPU.
+    # Leave ~1 GB to the host; tune this to the server if needed.
     deploy:
       resources:
         limits:
-          memory: 4g
+          memory: 3g
     logging:
       driver: json-file
       options:
