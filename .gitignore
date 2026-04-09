@@ -10,6 +10,10 @@ env/
 
 models/
 tmp/
+previews/
+fonts/*.ttf
+fonts/*.otf
+fonts/*.ttc
 *.mp4
 *.mov
 *.mkv
