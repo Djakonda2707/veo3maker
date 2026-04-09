@@ -1,7 +1,8 @@
-"""Telegram bot: dynamic burned-in subtitles with preset picker."""
+"""Telegram bot: dynamic animated subtitles rendered with Remotion."""
 import asyncio
 import logging
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
@@ -15,10 +16,8 @@ from aiogram.types import CallbackQuery, FSInputFile, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
-from presets import PRESET_BY_KEY, PRESETS
-from preview import PREVIEW_GRID_PATH, ensure_previews
-from render import FFmpegError, burn_subtitles, extract_audio, probe_size
-from subtitles import build_ass
+from render import FFmpegError, extract_audio, probe_duration
+from render_remotion import RemotionError, render_captioned_video
 from transcribe import transcribe_audio
 
 logging.basicConfig(
@@ -34,14 +33,33 @@ bot = Bot(
 dp = Dispatcher(storage=MemoryStorage())
 
 
+# ---------------------------------------------------------------------------
+# Presets (must mirror remotion/src/CaptionedVideo/schema.ts PRESET_KEYS)
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Preset:
+    key: str
+    title: str
+    description: str
+
+
+PRESETS: tuple[Preset, ...] = (
+    Preset("hormozi", "Hormozi", "жёлтое активное слово, белый контур"),
+    Preset("beast", "Beast", "красные плашки, как у MrBeast"),
+    Preset("neon", "Neon", "неоновое свечение, салатовый акцент"),
+    Preset("minimal", "Minimal", "тонкий белый текст, без обводки"),
+)
+PRESET_BY_KEY = {p.key: p for p in PRESETS}
+
+
 class VideoStates(StatesGroup):
     choosing_style = State()
 
 
 WELCOME = (
-    "Привет! Пришли мне видео — я наложу динамические встроенные субтитры.\n\n"
-    "После загрузки ты выберешь стиль из <b>6 пресетов</b> "
-    "(превью покажу картинкой).\n\n"
+    "Привет! Пришли мне видео — я наложу на него анимированные субтитры "
+    "в стиле TikTok/Reels (движок: <b>Remotion</b>).\n\n"
+    "После загрузки ты выберешь один из <b>4 стилей</b>.\n\n"
     f"Лимит файла: <b>{config.MAX_VIDEO_SIZE_MB} МБ</b> "
     "(ограничение Telegram Bot API)."
 )
@@ -62,12 +80,12 @@ def _build_presets_keyboard():
     kb = InlineKeyboardBuilder()
     for preset in PRESETS:
         kb.button(text=preset.title, callback_data=f"style:{preset.key}")
-    kb.button(text="✖ Отмена", callback_data="style:cancel")
-    kb.adjust(2, 2, 2, 1)
+    kb.button(text="Отмена", callback_data="style:cancel")
+    kb.adjust(2, 2, 1)
     return kb.as_markup()
 
 
-def _tail(text: str, limit: int = 600) -> str:
+def _tail(text: str, limit: int = 900) -> str:
     text = text.strip()
     return text if len(text) <= limit else "..." + text[-limit:]
 
@@ -91,13 +109,10 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    lines = ["Пресеты субтитров:"]
+    lines = ["Стили субтитров:"]
     for p in PRESETS:
-        lines.append(f"• <b>{p.title}</b>")
-    lines.append(
-        "\nПришли видео — после загрузки я покажу витрину "
-        "и предложу выбрать стиль."
-    )
+        lines.append(f"• <b>{p.title}</b> — {p.description}")
+    lines.append("\nПришли видео — после загрузки покажу кнопки выбора стиля.")
     await message.answer("\n".join(lines))
 
 
@@ -118,7 +133,6 @@ async def handle_video(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # Clear any previous in-progress state from the same user.
     prev = await state.get_data()
     await _cleanup(prev.get("work_dir"))
     await state.clear()
@@ -143,10 +157,8 @@ async def handle_video(message: Message, state: FSMContext) -> None:
         input_path=str(input_path),
     )
 
-    await status.delete()
-    await message.answer_photo(
-        FSInputFile(PREVIEW_GRID_PATH),
-        caption="Выбери стиль субтитров:",
+    await status.edit_text(
+        "Видео загружено. Выбери стиль субтитров:",
         reply_markup=_build_presets_keyboard(),
     )
 
@@ -186,23 +198,22 @@ async def on_style(callback: CallbackQuery, state: FSMContext) -> None:
 
     await callback.answer(f"Стиль: {preset.title}")
     try:
-        await callback.message.edit_caption(
-            caption=f"Стиль: <b>{preset.title}</b>\nОбрабатываю..."
+        await callback.message.edit_text(
+            f"Стиль: <b>{preset.title}</b>\n"
+            "1/3 Распознаю речь..."
         )
     except Exception:
         pass
-    # Lock: drop state so double-clicks don't fire a second pipeline on the
-    # same working directory.
+    # Drop state so double-clicks don't fire a second pipeline.
     await state.clear()
 
     audio_path = work_dir / "audio.wav"
-    subs_path = work_dir / "subs.ass"
     output_path = work_dir / "output.mp4"
 
     try:
         await extract_audio(input_path, audio_path)
 
-        words, language = await asyncio.to_thread(
+        captions, language = await asyncio.to_thread(
             transcribe_audio,
             str(audio_path),
             config.WHISPER_MODEL,
@@ -210,20 +221,38 @@ async def on_style(callback: CallbackQuery, state: FSMContext) -> None:
             config.WHISPER_COMPUTE_TYPE,
             config.WHISPER_LANGUAGE,
         )
-        if not words:
+        if not captions:
             await callback.message.answer("Не удалось распознать речь в видео.")
             return
 
-        width, height = await probe_size(input_path)
-        ass_content = build_ass(words, width, height, preset)
-        subs_path.write_text(ass_content, encoding="utf-8")
+        duration = await probe_duration(input_path)
+
+        try:
+            await callback.message.edit_text(
+                f"Стиль: <b>{preset.title}</b> · язык: <b>{language}</b>\n"
+                "2/3 Рендерю видео в Remotion..."
+            )
+        except Exception:
+            pass
 
         await bot.send_chat_action(
             callback.message.chat.id, ChatAction.UPLOAD_VIDEO
         )
-        await burn_subtitles(
-            input_path, subs_path, output_path, fonts_dir=config.FONTS_DIR
+        await render_captioned_video(
+            video_path=input_path,
+            captions=captions,
+            preset_key=preset.key,
+            duration_seconds=duration,
+            output_path=output_path,
         )
+
+        try:
+            await callback.message.edit_text(
+                f"Стиль: <b>{preset.title}</b> · язык: <b>{language}</b>\n"
+                "3/3 Отправляю..."
+            )
+        except Exception:
+            pass
 
         await callback.message.answer_video(
             FSInputFile(output_path),
@@ -235,6 +264,11 @@ async def on_style(callback: CallbackQuery, state: FSMContext) -> None:
         except Exception:
             pass
 
+    except RemotionError as exc:
+        logger.exception("remotion render failed")
+        await callback.message.answer(
+            f"Ошибка Remotion:\n<pre>{_tail(str(exc))}</pre>"
+        )
     except FFmpegError as exc:
         logger.exception("ffmpeg failed")
         await callback.message.answer(
@@ -258,23 +292,10 @@ async def fallback(message: Message) -> None:
 async def _startup() -> None:
     config.TMP_ROOT.mkdir(parents=True, exist_ok=True)
     # Wipe any leftovers from a previous run.
-    for child in config.TMP_ROOT.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child, ignore_errors=True)
-
-    if config.AUTO_DOWNLOAD_FONTS:
-        try:
-            from download_fonts import download_all
-
-            await asyncio.to_thread(download_all, False)
-        except Exception as exc:
-            logger.warning("font download failed: %s", exc)
-
-    logger.info("Generating preset previews...")
-    try:
-        await ensure_previews()
-    except Exception:
-        logger.exception("preview generation failed")
+    if config.TMP_ROOT.exists():
+        for child in config.TMP_ROOT.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
 
 
 async def main() -> None:

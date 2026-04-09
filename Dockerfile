@@ -1,45 +1,75 @@
 # syntax=docker/dockerfile:1.6
 #
-# Subtitle bot image.
+# Subtitle bot image — Remotion-based pipeline.
 #
-# * python:3.11-slim base — small and ships the CPython we need.
-# * ffmpeg + libass are installed from apt for the subtitles filter.
-# * fonts are downloaded at build time so container cold start is fast
-#   and we do not need outbound GitHub access on every restart.
+# Two worlds in one container:
+#   * Python 3.11 for the Telegram bot + faster-whisper transcription.
+#   * Node 20 + Chromium for Remotion-based subtitle rendering.
+#
+# The bot.py process shells out to `npx remotion render` to produce the
+# final video, so both runtimes need to be present.
 #
 FROM python:3.11-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    NODE_MAJOR=20 \
+    DEBIAN_FRONTEND=noninteractive
 
-# System deps: ffmpeg/libass for burn-in, libgomp for faster-whisper,
-# ca-certificates so urllib can reach GitHub for the OFL fonts.
+# System deps:
+#   * ffmpeg for audio extraction and container probing
+#   * libgomp1 for faster-whisper
+#   * curl / ca-certificates / gnupg for the NodeSource apt key
+#   * chromium + its runtime libs so Remotion can render headless
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         libgomp1 \
         ca-certificates \
+        curl \
+        gnupg \
+        chromium \
         fonts-dejavu-core \
+        fonts-noto-core \
+        fonts-noto-color-emoji \
+        libnss3 \
+        libxss1 \
+        libasound2 \
+        libatk-bridge2.0-0 \
+        libgtk-3-0 \
+        libgbm1 \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+        | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
+        > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Tell Remotion to use the system Chromium rather than downloading one.
+ENV REMOTION_CHROME_EXECUTABLE=/usr/bin/chromium \
+    PUPPETEER_SKIP_DOWNLOAD=1
 
 WORKDIR /app
 
-# Install python deps first so they get cached independently of code changes.
+# ---- Python deps (cached independently of code) --------------------------
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
-# Copy source.
-COPY . .
+# ---- Node deps for Remotion (cached independently of Python + source) ----
+COPY remotion/package.json remotion/package-lock.json* ./remotion/
+RUN cd remotion && npm install
 
-# Pre-download OFL fonts into the image so runtime does not need network.
-RUN python download_fonts.py || true
+# ---- Application source --------------------------------------------------
+COPY . .
 
 # Whisper model cache lives here; mount a volume to persist across restarts.
 ENV HF_HOME=/app/.cache/huggingface \
     XDG_CACHE_HOME=/app/.cache
 
-# tmp/ and previews/ are writable at runtime.
-RUN mkdir -p /app/tmp /app/previews /app/.cache
+# tmp/ is writable at runtime.
+RUN mkdir -p /app/tmp /app/.cache
 
 CMD ["python", "-u", "bot.py"]

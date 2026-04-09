@@ -10,17 +10,19 @@ env/
 
 models/
 tmp/
-previews/
-fonts/*.ttf
-fonts/*.otf
-fonts/*.ttc
+
+# Remotion / Node artifacts
+remotion/node_modules/
+remotion/.remotion/
+remotion/out/
+remotion/build/
+
 *.mp4
 *.mov
 *.mkv
 *.webm
 *.wav
 *.mp3
-*.ass
 *.srt
 
 .idea/

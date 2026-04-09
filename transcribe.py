@@ -1,4 +1,20 @@
-"""Speech-to-text with word-level timestamps via faster-whisper."""
+"""Speech-to-text with word-level timestamps via faster-whisper.
+
+Returns Remotion-compatible Caption[] objects, matching the
+``@remotion/captions`` ``Caption`` type:
+
+    {
+      "text": str,
+      "startMs": int,
+      "endMs": int,
+      "timestampMs": int | None,
+      "confidence": float | None,
+    }
+
+Whitespace note: Remotion's ``createTikTokStyleCaptions`` is whitespace
+sensitive. Each token's ``text`` should include a leading space for every
+word except the first, so that pages render with correct spacing.
+"""
 from functools import lru_cache
 from typing import Optional
 
@@ -18,9 +34,10 @@ def transcribe_audio(
     compute_type: str,
     language: Optional[str] = None,
 ) -> tuple[list[dict], str]:
-    """Return (words, detected_language).
+    """Return (captions, detected_language).
 
-    Each word is a dict: {"text": str, "start": float, "end": float}.
+    Each caption is a Remotion ``Caption`` dict, ready to be serialized as
+    JSON and passed to a Remotion composition.
     """
     model = _get_model(model_name, device, compute_type)
     segments, info = model.transcribe(
@@ -31,18 +48,42 @@ def transcribe_audio(
         beam_size=5,
     )
 
-    words: list[dict] = []
+    captions: list[dict] = []
+    first = True
     for segment in segments:
         if not segment.words:
             continue
         for w in segment.words:
-            text = (w.word or "").strip()
-            if not text:
+            raw = w.word or ""
+            stripped = raw.strip()
+            if not stripped:
                 continue
+
             start = float(w.start) if w.start is not None else 0.0
             end = float(w.end) if w.end is not None else start
             if end < start:
                 end = start
-            words.append({"text": text, "start": start, "end": end})
 
-    return words, info.language
+            start_ms = int(round(start * 1000))
+            end_ms = int(round(end * 1000))
+            if end_ms <= start_ms:
+                end_ms = start_ms + 1
+
+            text = stripped if first else " " + stripped
+            first = False
+
+            confidence: Optional[float]
+            probability = getattr(w, "probability", None)
+            confidence = float(probability) if probability is not None else None
+
+            captions.append(
+                {
+                    "text": text,
+                    "startMs": start_ms,
+                    "endMs": end_ms,
+                    "timestampMs": start_ms,
+                    "confidence": confidence,
+                }
+            )
+
+    return captions, info.language

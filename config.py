@@ -16,7 +16,9 @@ def _get(name: str, default: str | None = None) -> str | None:
 
 REPO_ROOT = Path(__file__).parent
 TMP_ROOT = REPO_ROOT / "tmp"
-FONTS_DIR = REPO_ROOT / "fonts"
+
+# --- Remotion --------------------------------------------------------------
+REMOTION_ROOT = REPO_ROOT / "remotion"
 
 BOT_TOKEN = _get("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -30,7 +32,3 @@ WHISPER_LANGUAGE = _get("WHISPER_LANGUAGE")  # None -> auto-detect
 
 # --- Limits ----------------------------------------------------------------
 MAX_VIDEO_SIZE_MB = int(_get("MAX_VIDEO_SIZE_MB", "20"))
-
-# --- Behaviour -------------------------------------------------------------
-# If set, the bot will try to auto-download OFL fonts on startup.
-AUTO_DOWNLOAD_FONTS = (_get("AUTO_DOWNLOAD_FONTS", "1") == "1")

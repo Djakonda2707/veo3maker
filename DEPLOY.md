@@ -1,123 +1,90 @@
-# Deploy: subtitle bot on Ubuntu via Docker
+# Deployment
 
-Tested on Ubuntu 20.04 / 22.04 / 24.04 (x86_64). For ARM just rebuild —
-the Dockerfile is arch-agnostic.
+The bot ships as a single Docker image that bundles:
 
-## 1. Install Docker (skip if already installed)
+* Python 3.11 + `aiogram` + `faster-whisper` (the Telegram bot + transcription)
+* Node 20 + headless Chromium + Remotion 4 (the rendering engine)
+* `ffmpeg` (audio extraction, probing)
+
+## 1. Requirements
+
+* Ubuntu 22.04 / 24.04 x86_64 (or any Linux host with Docker)
+* At least **2 CPU cores** and **3.5 GB RAM** — Remotion + Whisper `small` model fit comfortably
+* No GPU required
+* Docker Engine 24+ and the Compose plugin (`docker compose`, not the legacy `docker-compose`)
+
+### Installing Docker on a fresh Ubuntu host
 
 ```bash
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker "$USER"
-# log out and back in so the group takes effect, or run: newgrp docker
+newgrp docker
 ```
 
-Verify:
-
-```bash
-docker --version
-docker compose version
-```
-
-## 2. Clone the repo
+## 2. Clone and configure
 
 ```bash
 git clone https://github.com/djakonda2707/veo3maker.git
 cd veo3maker
-git checkout claude/telegram-video-subtitles-bot-AjydB
-```
-
-## 3. Configure environment
-
-```bash
 cp .env.example .env
-nano .env
+nano .env   # paste your BOT_TOKEN
 ```
 
-Fill in at minimum:
+Required environment variables:
 
-```ini
-BOT_TOKEN=123456:ABCDEF...            # from @BotFather
-WHISPER_MODEL=small                   # tiny/base/small/medium/large-v3
-WHISPER_DEVICE=cpu                    # or "cuda" if the host has a GPU
-WHISPER_COMPUTE_TYPE=int8             # int8 on CPU, float16 on GPU
-WHISPER_LANGUAGE=                     # empty = auto-detect
-MAX_VIDEO_SIZE_MB=20                  # Telegram Bot API limit
-AUTO_DOWNLOAD_FONTS=1
-```
+| Variable | Example | Notes |
+|---|---|---|
+| `BOT_TOKEN` | `12345:ABCDEF...` | From [@BotFather](https://t.me/BotFather) |
+| `WHISPER_MODEL` | `small` | `tiny` / `base` / `small` / `medium` / `large-v3` |
+| `WHISPER_DEVICE` | `cpu` | Only `cpu` is supported on GPU-less hosts |
+| `WHISPER_COMPUTE_TYPE` | `int8` | `int8` is fastest on CPU |
+| `WHISPER_LANGUAGE` | *(empty)* | Leave empty for auto-detect |
+| `MAX_VIDEO_SIZE_MB` | `20` | Telegram Bot API file-download limit |
 
-Model sizing rule of thumb on CPU:
-
-| Model     | RAM       | Speed (ref 1 min audio) |
-|-----------|-----------|-------------------------|
-| tiny      | ~1 GB     | very fast               |
-| base      | ~1.5 GB   | fast                    |
-| small     | ~2 GB     | balanced (default)      |
-| medium    | ~4-5 GB   | slower                  |
-| large-v3  | ~8-10 GB  | slow, highest quality   |
-
-## 4. Build and start
+## 3. Build and run
 
 ```bash
-docker compose build
-docker compose up -d
-docker compose logs -f
+docker compose up -d --build
+docker compose logs -f subsbot
 ```
 
-You should see:
+The first run will:
 
-```
-... INFO subsbot: Generating preset previews...
-... INFO subsbot: Starting bot, whisper=small device=cpu
-... INFO aiogram.dispatcher: Start polling
-```
+1. Build the image (pulls Node, Chromium, ffmpeg — ~1.5 GB)
+2. `npm install` inside `remotion/` (cached in the image)
+3. Download the selected `faster-whisper` model into the `whisper-cache` volume (~240 MB for `small`)
 
-## 5. Use the bot
+Subsequent restarts are fast.
 
-1. Open the bot in Telegram, press **Start**.
-2. Send a video (<= 20 MB due to Bot API limit).
-3. Pick one of 6 styles from the preview grid.
-4. Wait for the result — the bot transcribes, builds the ASS, burns
-   subtitles into the video with ffmpeg and returns the MP4.
-
-## Updating
+## 4. Updating
 
 ```bash
-cd veo3maker
 git pull
-docker compose build
-docker compose up -d
+docker compose up -d --build
 ```
 
-## Troubleshooting
+The Whisper model cache and the bot's temporary workdir (`subsbot-tmp`) are preserved as named volumes, so updates do not re-download the model.
 
-### Out of memory on `small` / `medium`
-Drop `WHISPER_MODEL` to `base` or `tiny`, or increase swap.
+## 5. Troubleshooting
 
-### `Could not load fonts` in logs
-The build step runs `download_fonts.py`. Rebuild: `docker compose build --no-cache`.
+**Chromium can't start inside the container**
 
-### Video > 20 MB
-Telegram Bot API refuses to download files larger than 20 MB unless you
-run a local Bot API server. Either ask the user to compress, or set up
-https://github.com/tdlib/telegram-bot-api next to the bot and point it
-at that server (not included in this repo yet).
+Remotion uses the system Chromium installed in the image (`/usr/bin/chromium`). If you see "Failed to launch the browser process", check that:
 
-### Free more space
 ```bash
-docker system prune -af
-docker volume ls  # whisper-cache holds the model weights
+docker compose exec subsbot chromium --version
 ```
 
-### Logs
-```bash
-docker compose logs -f                  # follow
-docker compose logs --tail=200 subsbot  # last 200 lines
-```
+returns a version. The image sets `REMOTION_CHROME_EXECUTABLE=/usr/bin/chromium`, so Remotion should not attempt to download its own copy.
 
-### Stop / restart
-```bash
-docker compose stop
-docker compose restart
-docker compose down          # stop + remove container
-docker compose down -v       # also drop whisper-cache volume
-```
+**Out of memory during render**
+
+Remotion renders single-threaded in this project (`concurrency=1`) so it fits in ~1.5 GB. If you still OOM:
+
+* Use a smaller Whisper model (`tiny` or `base`)
+* Lower `MAX_VIDEO_SIZE_MB` so users can't submit huge clips
+* Bump the compose `deploy.resources.limits.memory` if your host has more RAM
+
+**`TelegramNetworkError: Cannot connect to host api.telegram.org`**
+
+Your host can't reach Telegram. Check DNS and firewall. This bot uses long-polling, no inbound ports required — only outbound HTTPS to `api.telegram.org`.
