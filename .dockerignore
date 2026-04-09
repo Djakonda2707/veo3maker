@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+__pycache__
+*.pyc
+*.pyo
+tmp/
+previews/
+fonts/*.ttf
+fonts/*.otf
+fonts/*.ttc
+examples/
+.vscode
+.idea
+*.md

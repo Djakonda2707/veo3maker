@@ -1,0 +1,31 @@
+services:
+  subsbot:
+    build: .
+    image: veo3maker-subsbot:latest
+    container_name: subsbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persist whisper model weights between container restarts so we
+      # do not re-download them every time the container is recreated.
+      - whisper-cache:/app/.cache
+      # Working dir for in-flight jobs; the bot wipes this on startup so
+      # orphans never accumulate. Kept as a named volume to avoid bind
+      # mount permission headaches on the host.
+      - subsbot-tmp:/app/tmp
+    # faster-whisper links against OpenMP and benefits from several cores.
+    # Adjust limits to match the host; these are safe defaults for 2-4 CPU.
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  whisper-cache:
+  subsbot-tmp:
