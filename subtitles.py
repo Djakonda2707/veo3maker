@@ -80,6 +80,17 @@ def _group_phrases(
     return phrases
 
 
+def _line_prefix(preset: Preset) -> str:
+    """ASS override tags applied once at the start of every Dialogue line.
+
+    For ``glow`` this dims+blurs inactive words so the active one stands
+    out even after its pop-in animation has finished.
+    """
+    if preset.highlight_effect == "glow":
+        return "{\\blur4}"
+    return ""
+
+
 def _highlight_wrap(text: str, preset: Preset) -> str:
     """Return ``text`` wrapped with ASS override tags for its highlight."""
     effect = preset.highlight_effect
@@ -89,14 +100,16 @@ def _highlight_wrap(text: str, preset: Preset) -> str:
         return (
             f"{{\\c{color}\\fscx60\\fscy60"
             f"\\t(0,90,\\fscx130\\fscy130)"
-            f"\\t(90,200,\\fscx115\\fscy115)}}"
+            f"\\t(90,200,\\fscx118\\fscy118)}}"
             f"{text}{{\\r}}"
         )
     if effect == "glow":
+        # Reset the line-level blur, brighten + scale + colorize this word,
+        # then reapply the blur for the rest of the line.
         return (
-            f"{{\\c{color}\\blur6\\alpha&H80&"
-            f"\\t(0,220,\\blur0\\alpha&H00&)}}"
-            f"{text}{{\\r}}"
+            f"{{\\r\\blur0\\c{color}\\fscx115\\fscy115}}"
+            f"{text}"
+            f"{{\\r\\blur4}}"
         )
     if effect == "color":
         return f"{{\\c{color}}}{text}{{\\r}}"
@@ -139,13 +152,14 @@ def _build_phrase_events(phrase: list[dict], preset: Preset) -> list[str]:
     phrase_start = phrase[0]["start"]
     phrase_end = phrase[-1]["end"] + 0.1
     separator = " " if preset.layout == "horizontal" else "\\N"
+    line_prefix = _line_prefix(preset)
 
     # No per-word highlight — show the whole phrase as one line.
     if preset.highlight_effect == "none":
         text = separator.join(_escape(w["text"]) for w in phrase)
         return [
             f"Dialogue: 0,{_fmt_time(phrase_start)},"
-            f"{_fmt_time(phrase_end)},Default,,0,0,0,,{text}"
+            f"{_fmt_time(phrase_end)},Default,,0,0,0,,{line_prefix}{text}"
         ]
 
     events: list[str] = []
@@ -159,7 +173,7 @@ def _build_phrase_events(phrase: list[dict], preset: Preset) -> list[str]:
         for j, w in enumerate(phrase):
             escaped = _escape(w["text"])
             parts.append(_highlight_wrap(escaped, preset) if j == i else escaped)
-        line_text = separator.join(parts)
+        line_text = line_prefix + separator.join(parts)
 
         events.append(
             f"Dialogue: 0,{_fmt_time(active_start)},"

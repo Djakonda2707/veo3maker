@@ -39,7 +39,7 @@ PRESETS: list[Preset] = [
     Preset(
         key="minimal",
         title="1. Minimal",
-        sample_text="this is your minimal caption",
+        sample_text="clean minimal style",
         font="Inter",
         font_size_ratio=0.055,
         max_words_per_phrase=5,

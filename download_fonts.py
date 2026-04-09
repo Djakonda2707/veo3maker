@@ -12,14 +12,13 @@ FONTS_DIR = Path(__file__).parent / "fonts"
 BASE = "https://github.com/google/fonts/raw/main/ofl"
 
 FILES: dict[str, str] = {
-    "Inter-Bold.ttf": f"{BASE}/inter/static/Inter-Bold.ttf",
-    "Inter-Black.ttf": f"{BASE}/inter/static/Inter-Black.ttf",
+    # Inter is a variable font in google/fonts; libass picks it up fine.
+    "Inter.ttf": f"{BASE}/inter/Inter%5Bopsz%2Cwght%5D.ttf",
+    "Inter-Italic.ttf": f"{BASE}/inter/Inter-Italic%5Bopsz%2Cwght%5D.ttf",
     "Anton-Regular.ttf": f"{BASE}/anton/Anton-Regular.ttf",
     "BebasNeue-Regular.ttf": f"{BASE}/bebasneue/BebasNeue-Regular.ttf",
-    "PlayfairDisplay-BlackItalic.ttf": (
-        f"{BASE}/playfairdisplay/PlayfairDisplay%5Bwght%5D.ttf"
-    ),
-    "PlayfairDisplay-Italic-BlackItalic.ttf": (
+    "PlayfairDisplay.ttf": f"{BASE}/playfairdisplay/PlayfairDisplay%5Bwght%5D.ttf",
+    "PlayfairDisplay-Italic.ttf": (
         f"{BASE}/playfairdisplay/PlayfairDisplay-Italic%5Bwght%5D.ttf"
     ),
 }
