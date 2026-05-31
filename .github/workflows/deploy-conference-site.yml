@@ -1,0 +1,48 @@
+name: Deploy conference site
+
+# Собирает лендинг из conference-site/ и публикует его в ветку gh-pages,
+# откуда GitHub Pages раздаёт сайт по постоянной ссылке.
+
+on:
+  push:
+    branches: [claude/ai-conference-site-AcqSk]
+    paths:
+      - 'conference-site/**'
+      - '.github/workflows/deploy-conference-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-conference-site
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: conference-site/package-lock.json
+
+      - name: Install dependencies
+        working-directory: conference-site
+        run: npm ci
+
+      - name: Build
+        working-directory: conference-site
+        run: npm run build
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: conference-site/dist
+          publish_branch: gh-pages
