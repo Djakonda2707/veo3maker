@@ -11,6 +11,9 @@ env/
 models/
 tmp/
 
+# Pipeline runtime artifacts (characters, runs, generated media)
+workspace/
+
 # Remotion / Node artifacts
 remotion/node_modules/
 remotion/.remotion/

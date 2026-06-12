@@ -123,10 +123,14 @@ class Hypothesis:
     notes: str = ""
 
     def slug(self) -> str:
+        import hashlib
         import re
 
         base = f"{self.character}-{self.formula}-{self.hook}".lower()
-        return re.sub(r"[^a-z0-9]+", "-", base).strip("-")[:60] or "hypothesis"
+        # Keep unicode letters/digits (Cyrillic included); collapse the rest.
+        cleaned = re.sub(r"[^\w]+", "-", base, flags=re.UNICODE).strip("-")[:48]
+        suffix = hashlib.sha1(base.encode("utf-8")).hexdigest()[:6]
+        return f"{cleaned or 'hyp'}-{suffix}"
 
     def to_dict(self) -> dict:
         return asdict(self)

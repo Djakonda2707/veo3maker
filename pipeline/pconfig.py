@@ -2,6 +2,15 @@
 
 Kept separate from the bot's ``config.py`` so the pipeline can run as a
 standalone CLI (without a Telegram token) and vice-versa.
+
+Stack (всё pluggable через .env):
+
+* Оркестратор   — Claude Code (подписка), отдельный API-ключ не нужен.
+* First frame   — Nano Banana / Gemini image через relay-совместимый
+                  endpoint (laozhang.ai по умолчанию, или прямой Gemini).
+* Оживление     — fal.ai (Wan 2.5 по умолчанию; Kling/Seedance флагом).
+* Сборка        — ffmpeg. Субтитры — существующий Remotion-рендер.
+* Скрейпер      — RapidAPI social-api4 (этап Research, позже).
 """
 import os
 from pathlib import Path
@@ -27,6 +36,7 @@ def _flag(name: str, default: bool) -> bool:
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PIPELINE_ROOT = REPO_ROOT / "pipeline"
+REMOTION_ROOT = REPO_ROOT / "remotion"
 
 # Where runs, characters and artifacts live. Git-ignored.
 WORKSPACE = Path(_get("PIPELINE_WORKSPACE", str(REPO_ROOT / "workspace")))
@@ -43,31 +53,41 @@ VIDEO_HEIGHT = int(_get("PIPELINE_VIDEO_HEIGHT", "1920"))  # 9:16 vertical
 FPS = int(_get("PIPELINE_FPS", "30"))
 SEGMENT_SECONDS = float(_get("PIPELINE_SEGMENT_SECONDS", "10"))  # 10s "куски"
 
-# --- Orchestrator (Claude) -------------------------------------------------
-ANTHROPIC_API_KEY = _get("ANTHROPIC_API_KEY")
-ANTHROPIC_MODEL = _get("ANTHROPIC_MODEL", "claude-opus-4-8")
+# --- First frame (image) ---------------------------------------------------
+# Provider: "mock" | "relay" (OpenAI/Gemini-compatible, e.g. laozhang.ai) | "gemini"
+IMAGE_PROVIDER = _get("IMAGE_PROVIDER", "mock")
+IMAGE_API_KEY = _get("IMAGE_API_KEY")
+# laozhang.ai exposes an OpenAI-compatible base; direct Google would be
+# https://generativelanguage.googleapis.com/v1beta/openai
+IMAGE_API_BASE_URL = _get("IMAGE_API_BASE_URL", "https://api.laozhang.ai/v1")
+IMAGE_MODEL = _get("IMAGE_MODEL", "gemini-2.5-flash-image")  # Nano Banana
 
-# --- Research: ScrapeCreators ---------------------------------------------
-SCRAPECREATORS_API_KEY = _get("SCRAPECREATORS_API_KEY")
-SCRAPECREATORS_BASE_URL = _get(
-    "SCRAPECREATORS_BASE_URL", "https://api.scrapecreators.com"
-)
-
-# --- Video analysis: Gemini Flash Lite ------------------------------------
-GEMINI_API_KEY = _get("GEMINI_API_KEY")
-GEMINI_MODEL = _get("GEMINI_MODEL", "gemini-2.5-flash-lite")
-
-# --- Generation: Higgsfield (Nano Banana first frame + Kling animate) ------
+# --- Animate (image -> video) ----------------------------------------------
+# Provider: "mock" | "fal" | "higgsfield"
+VIDEO_PROVIDER = _get("VIDEO_PROVIDER", "mock")
+FAL_API_KEY = _get("FAL_API_KEY")
+# fal.ai model slug used for image-to-video. Wan 2.5 = cheap default.
+FAL_VIDEO_MODEL = _get("FAL_VIDEO_MODEL", "fal-ai/wan-25/image-to-video")
 HIGGSFIELD_API_KEY = _get("HIGGSFIELD_API_KEY")
 HIGGSFIELD_BASE_URL = _get("HIGGSFIELD_BASE_URL", "https://api.higgsfield.ai")
-FIRST_FRAME_MODEL = _get("FIRST_FRAME_MODEL", "nano-banana")
-ANIMATE_MODEL = _get("ANIMATE_MODEL", "kling")
+
+# --- Research scraper (этап 1, позже) --------------------------------------
+# Provider: "mock" | "rapidapi" | "scrapecreators"
+SCRAPER_PROVIDER = _get("SCRAPER_PROVIDER", "mock")
+RAPIDAPI_KEY = _get("RAPIDAPI_KEY")
+RAPIDAPI_HOST = _get("RAPIDAPI_HOST", "social-api4.p.rapidapi.com")
+SCRAPECREATORS_API_KEY = _get("SCRAPECREATORS_API_KEY")
+
+# --- Video analysis: Gemini Flash Lite (этап 1, позже) ---------------------
+GEMINI_API_KEY = _get("GEMINI_API_KEY") or IMAGE_API_KEY
+GEMINI_BASE_URL = _get("GEMINI_BASE_URL", IMAGE_API_BASE_URL)
+GEMINI_MODEL = _get("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
 # --- Subtitles (reuse the existing Remotion renderer) ----------------------
 SUBTITLE_PRESET = _get("PIPELINE_SUBTITLE_PRESET", "hormozi")
-RENDER_SUBTITLES = _flag("PIPELINE_RENDER_SUBTITLES", not DRY_RUN)
+RENDER_SUBTITLES = _flag("PIPELINE_RENDER_SUBTITLES", False)
 
-# --- Analytics alerts ------------------------------------------------------
+# --- Analytics alerts (этап 1, позже) --------------------------------------
 ALERT_BOT_TOKEN = _get("ALERT_BOT_TOKEN") or _get("BOT_TOKEN")
 ALERT_CHAT_ID = _get("ALERT_CHAT_ID")
 
